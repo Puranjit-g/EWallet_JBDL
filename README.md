@@ -1,438 +1,250 @@
-# EWallet Microservices Project
+# E-Wallet Distributed Microservices Platform
 
-This repository contains a simple event-driven e-wallet system built with Spring Boot, Spring Security, Spring Data JPA, MySQL, and Kafka. The project is organized as a multi-module Maven build and demonstrates how user onboarding, wallet creation, transaction initiation, wallet balance updates, and notification delivery can be split across separate services.
+[![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://www.oracle.com/java/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.1-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-Event--Driven-black.svg)](https://kafka.apache.org/)
+[![MySQL](https://img.shields.io/badge/MySQL-8.0-blue.svg)](https://www.mysql.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## Overview
+An event-driven digital e-wallet application  built with **Java 17**, **Spring Boot 3.3.1**, **Apache Kafka**, **Spring Security**, and **MySQL**. The system is architected as a distributed multi-module microservice network to handle user onboarding, wallet creation, instant peer-to-peer (P2P) fund transfers, transaction auditing, and real-time email notification dispatching.
 
-The application is composed of these modules:
+---
 
-- `User-Service`
-- `Wallet-Service`
-- `Transaction-Service`
-- `Notification-service`
-- `utils`
+## 🏛 System Architecture & Event-Driven Workflow
 
-At a high level:
+The platform leverages **Apache Kafka** for asynchronous inter-service communication and eventual consistency across service boundaries.
 
-1. A user is created in `User-Service`.
-2. `User-Service` publishes a `USER_CREATED_FROM_CONSOLE` Kafka event.
-3. `Wallet-Service` listens to that event and creates a wallet with a default balance.
-4. `Notification-service` listens to the same event and sends a welcome email.
-5. A logged-in user initiates a transaction through `Transaction-Service`.
-6. `Transaction-Service` publishes a `TXN_INITIATED_TOPIC` event.
-7. `Wallet-Service` validates wallets, updates balances, and publishes a `TXN_UPDATED_TOPIC` event.
-8. `Transaction-Service` currently receives the update event but does not yet persist the final transaction status.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User / Client
+    participant US as User Service (8081)
+    participant TS as Transaction Service (5051)
+    participant WS as Wallet Service (7071)
+    participant NS as Notification Service (6061)
+    participant Kafka as Apache Kafka Broker (9092)
 
-## Tech Stack
+    %% User Registration Flow
+    rect rgb(240, 248, 255)
+    note right of User: User Registration Flow
+    User->>US: POST /user/addUpdate (User Details)
+    US->>US: Save User & Encode Password
+    US->>Kafka: Publish USER_CREATED_FROM_CONSOLE
+    par Wallet Provisioning
+        Kafka-->>WS: Consume USER_CREATED_FROM_CONSOLE
+        WS->>WS: Create Wallet (Initial Balance: 50.0)
+        WS->>Kafka: Publish WALLET_CREATED_FROM_CONSOLE
+    and Welcome Notification
+        Kafka-->>NS: Consume USER_CREATED_FROM_CONSOLE
+        NS->>NS: Send Welcome Email via SMTP
+    end
+    end
 
-- Java 17 source level in Maven configuration
-- Spring Boot `3.3.1`
-- Spring Web
-- Spring Security with HTTP Basic authentication
-- Spring Data JPA
-- MySQL
-- Apache Kafka
-- Lombok
-- Mailtrap SMTP for email testing
-
-## Repository Structure
-
-```text
-EWallet_JBDL-main/
-├── pom.xml
-├── User-Service/
-├── Wallet-Service/
-├── Transaction-Service/
-├── Notification-service/
-└── utils/
+    %% P2P Money Transfer Flow
+    rect rgb(255, 245, 238)
+    note right of User: P2P Money Transfer Flow
+    User->>TS: POST /txn/initTxn (Receiver, Amount, Purpose) [Basic Auth]
+    TS->>US: GET /user/userDetails?contact={sender} (Validate & Fetch Authorities)
+    US-->>TS: Return User Details & Authorities
+    TS->>TS: Create Txn Entity (Status: INITIATED)
+    TS->>Kafka: Publish TXN_INITIATED_TOPIC
+    Kafka-->>WS: Consume TXN_INITIATED_TOPIC
+    alt Sender/Receiver Valid & Sufficient Balance
+        WS->>WS: Update Wallets (Deduct Sender, Credit Receiver)
+        WS->>Kafka: Publish TXN_UPDATED_TOPIC (Status: SUCCESS)
+    else Invalid Wallets or Insufficient Funds
+        WS->>Kafka: Publish TXN_UPDATED_TOPIC (Status: FAILED)
+    end
+    Kafka-->>TS: Consume TXN_UPDATED_TOPIC
+    end
 ```
 
-## Module Responsibilities
+---
 
-### `User-Service`
+## 🧩 Service Modules Overview
 
-Responsibilities:
+| Service Name | Port | Description | Database / Storage | Key Responsibilities |
+| :--- | :---: | :--- | :--- | :--- |
+| **`User-Service`** | `8081` | User onboarding & identity management | MySQL (`JBDL_EWALLET`) | User registration, authentication, authority management, and user lookup. |
+| **`Wallet-Service`** | `7071` | Digital wallet & ledger manager | MySQL (`JBDL_EWALLET`) | Auto-creates wallets with welcome bonus (`50.0`), validates funds, updates balances. |
+| **`Transaction-Service`** | `5051` | P2P transfer orchestration | MySQL (`JBDL_EWALLET`) | Initiates transaction requests, validates caller identity via User-Service, and consumes transaction update events. |
+| **`Notification-service`** | `6061` | Communication & Email dispatch | SMTP / Mailtrap | Listens for system events and emails confirmation/welcome notices to users. |
+| **`utils`** | N/A | Shared utility library | Shared Module | Holds common constants, DTOs, Kafka topics, and shared enums (`UserIdentifier`). |
 
-- Register or update users
-- Store user records in MySQL
-- Encode passwords with BCrypt
-- Expose user details for authentication
-- Publish a user-created Kafka event
-- Seed a service account for inter-service authentication
+---
 
-Important endpoints:
+## 🚀 Key Features
 
-- `POST /user/addUpdate`
-- `GET /user/userDetails?contact=<contact>`
+- **Decoupled Architecture**: Distributed microservices built with a shared Maven parent POM for easy dependency management.
+- **Event-Driven Messaging**: Asynchronous event publishing and consumption via Kafka topics (`USER_CREATED_FROM_CONSOLE`, `WALLET_CREATED_FROM_CONSOLE`, `TXN_INITIATED_TOPIC`, `TXN_UPDATED_TOPIC`).
+- **Role-Based Security**: Spring Security Basic Auth integration with custom authority verification (`USER`, `ADMIN`, `SERVICE`).
+- **Automatic Wallet Provisioning**: Every newly registered user automatically gets an active wallet pre-funded with initial credits.
+- **Transactional Wallet Updates**: Validates sender balance and receiver details before updating wallet balances within a database transaction.
+- **Email Notifications**: Automated mail notifications powered by `JavaMailSender` and SMTP configuration.
 
-Port:
+---
 
-- `8081`
+## 🛠 Tech Stack
 
-Important behavior:
+- **Core**: Java 17, Spring Boot 3.3.1
+- **Security**: Spring Security (DAO Authentication Provider, BCrypt Password Encoder)
+- **Data & Persistence**: Spring Data JPA, Hibernate, MySQL 8.x
+- **Event Streaming**: Spring Kafka, Apache Kafka Broker
+- **Messaging Formats**: JSON (Jackson `ObjectMapper`, `json-simple`)
+- **Email**: Spring Boot Starter Mail (SMTP)
+- **Utilities**: Project Lombok, Maven Multi-Module Packaging
 
-- New users are always assigned the `USER` authority in the current implementation.
-- On startup, the service creates a service user:
-  - username/contact: `txn-service`
-  - password: `txn-service`
-  - authority: `SERVICE`
+---
 
-### `Wallet-Service`
-
-Responsibilities:
-
-- Create a wallet when a user-created event is consumed
-- Assign a default initial wallet balance
-- Validate sender and receiver wallets for transactions
-- Debit the sender and credit the receiver
-- Publish transaction result events
-
-Port:
-
-- `7071`
-
-Default wallet balance on user creation:
-
-- `50.0`
-
-### `Transaction-Service`
-
-Responsibilities:
-
-- Authenticate end users
-- Accept transaction initiation requests
-- Persist initiated transactions
-- Publish transaction initiation events
-- Consume transaction update events
-
-Port:
-
-- `5051`
-
-Important endpoint:
-
-- `POST /txn/initTxn`
-
-Request parameters:
-
-- `receiver`
-- `purpose`
-- `amount`
-
-Authentication:
-
-- Requires a user authenticated with `USER` authority
-- Uses HTTP Basic authentication
-
-Inter-service dependency:
-
-- Calls `User-Service` at `http://localhost:8081/user/userDetails`
-- Authenticates to `User-Service` using `txn-service / txn-service`
-
-### `Notification-service`
-
-Responsibilities:
-
-- Listen for user-created events
-- Send welcome email notifications
-
-Port:
-
-- `6061`
-
-SMTP provider configured in code:
-
-- Mailtrap sandbox SMTP
-
-### `utils`
-
-Responsibilities:
-
-- Shared constants for Kafka topic names and JSON keys
-- Shared enums such as user identifier type
-
-## Shared Kafka Topics
-
-Defined in `utils/src/main/java/org/gfg/Utilities/CommonConstants.java`:
-
-- `USER_CREATED_FROM_CONSOLE`
-- `WALLET_CREATED_FROM_CONSOLE`
-- `TXN_INITIATED_TOPIC`
-- `TXN_UPDATED_TOPIC`
-
-## Data Model
-
-### User
-
-Stored by `User-Service`.
-
-Important fields:
-
-- `pk`
-- `contact`
-- `email`
-- `authorities`
-- `password`
-- `name`
-- `address`
-- `dob`
-- `userType`
-- `identifier`
-- `userIdentifierValue`
-- audit timestamps
-
-Notes:
-
-- `contact` is unique
-- `email` is unique
-- Spring Security uses `contact` as the username
-
-### Wallet
-
-Stored by `Wallet-Service`.
-
-Important fields:
-
-- `id`
-- `userId`
-- `contact`
-- `balance`
-- audit timestamps
-
-### Transaction
-
-Stored by `Transaction-Service`.
-
-Important fields:
-
-- `pk`
-- `txnId`
-- `amount`
-- `sender`
-- `receiver`
-- `purpose`
-- `status`
-- audit timestamps
-
-Transaction statuses defined in code:
-
-- `PENDING`
-- `INITIATED`
-- `SUCCESS`
-- `FAILED`
-
-## Security Model
-
-Authorities configured in properties:
-
-- `USER`
-- `ADMIN`
-- `SERVICE`
-
-Current access rules:
-
-- `POST /user/addUpdate` is open to everyone
-- `GET /user/userDetails` requires `SERVICE` or `ADMIN`
-- `POST /txn/initTxn` requires `USER`
-
-Authentication style:
-
-- HTTP Basic
-- CSRF disabled
-
-## Required Local Infrastructure
-
-You need these services running locally:
-
-- MySQL on `localhost:3306`
-- Kafka on `localhost:9092`
-
-Database used by all services:
-
-- `JBDL_70_EWALLET`
-
-Default MySQL credentials currently hardcoded in properties:
-
-- username: `root`
-- password: `rootroot`
-
-## Configuration Summary
-
-### User-Service
-
-From `application.properties`:
-
-- port: `8081`
-- database: `jdbc:mysql://localhost:3306/JBDL_70_EWALLET?createDatabaseIfNotExist=true`
-- Kafka producer enabled
-
-### Wallet-Service
-
-- port: `7071`
-- same MySQL database
-- Kafka consumer and producer enabled
-- default new-wallet balance: `50.0`
-
-### Transaction-Service
-
-- port: `5051`
-- same MySQL database
-- Kafka consumer and producer enabled through explicit config classes
-
-### Notification-service
-
-- port: `6061`
-- Kafka consumer enabled
-- SMTP host: `sandbox.smtp.mailtrap.io`
-
-## How the Main Flow Works
-
-### 1. User Registration
-
-Call:
-
-```http
-POST /user/addUpdate
-Content-Type: application/json
-```
-
-Example request body:
-
-```json
-{
-  "name": "Rahul",
-  "contact": "9999999999",
-  "email": "rahul@example.com",
-  "address": "Bangalore",
-  "dob": "1998-10-21",
-  "userIdentifier": "PAN",
-  "userIdentifierValue": "ABCDE1234F",
-  "password": "secret123"
-}
-```
-
-What happens:
-
-- User is saved in MySQL
-- Password is BCrypt-encoded
-- A user-created event is published to Kafka
-
-### 2. Wallet Auto-Creation
-
-`Wallet-Service` consumes the user-created event and:
-
-- extracts `user_id` and `contact`
-- creates a wallet
-- sets the starting balance to `50.0`
-- publishes a wallet-created event
-
-### 3. Welcome Email
-
-`Notification-service` consumes the same user-created event and:
-
-- reads `name` and `email`
-- sends a welcome email through Mailtrap SMTP
-
-### 4. Transaction Initiation
-
-Call:
-
-```http
-POST /txn/initTxn?receiver=8888888888&purpose=rent&amount=20
-Authorization: Basic <base64(user-contact:user-password)>
-```
-
-What happens:
-
-- `Transaction-Service` authenticates the sender
-- creates a `Txn` record with status `INITIATED`
-- generates a UUID transaction id
-- publishes a transaction-initiated Kafka event
-
-### 5. Wallet Balance Update
-
-`Wallet-Service` consumes the transaction event and checks:
-
-- sender wallet exists
-- receiver wallet exists
-- sender has enough balance
-
-Outcomes:
-
-- on success: sender balance is reduced and receiver balance is increased
-- on failure: a failure message is created
-
-Then it publishes a transaction update event with:
-
-- `txnId`
-- `status`
-- `message`
-
-## Running the Project
+## 🚦 Getting Started
 
 ### Prerequisites
 
-- JDK 17 or compatible Java installation
-- Maven wrapper support
-- MySQL running locally
-- Kafka running locally
+Ensure you have the following installed on your machine:
+- **JDK 17** or higher
+- **Apache Maven 3.8+**
+- **MySQL Server 8.0+** running on `localhost:3306` (Default user: `[DATABASE_USERNAME]`, password: `[DATABASE_PASSWORD]`)
+- **Apache Kafka & Zookeeper** running on `localhost:9092`
 
-### Build all modules
-
-From the project root:
-
-```bash
-./mvnw clean install
+### 1. Database Setup
+MySQL database will be automatically created on application boot via the connection string:
+```properties
+spring.datasource.url=jdbc:mysql://localhost:3306/JBDL_EWALLET?createDatabaseIfNotExist=true
 ```
 
-### Run services
-
-Start each service from its module directory or from your IDE:
-
+### 2. Start Kafka Broker
+Start Zookeeper and Apache Kafka broker locally:
 ```bash
-./mvnw spring-boot:run -pl User-Service
-./mvnw spring-boot:run -pl Wallet-Service
-./mvnw spring-boot:run -pl Transaction-Service
-./mvnw spring-boot:run -pl Notification-service
+# Start Zookeeper
+zookeeper-server-start.sh config/zookeeper.properties
+
+# Start Kafka Server
+kafka-server-start.sh config/server.properties
 ```
 
-Suggested startup order:
-
-1. MySQL
-2. Kafka
-3. `User-Service`
-4. `Wallet-Service`
-5. `Notification-service`
-6. `Transaction-Service`
-
-## Example Usage
-
-### Create a user
-
+### 3. Build Project
+Clone the repository and build all microservices using Maven:
 ```bash
-curl -X POST "http://localhost:8081/user/addUpdate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name":"Rahul",
-    "contact":"9999999999",
-    "email":"rahul@example.com",
-    "address":"Bangalore",
-    "dob":"1998-10-21",
-    "userIdentifier":"PAN",
-    "userIdentifierValue":"ABCDE1234F",
-    "password":"secret123"
-  }'
+git clone https://github.com/Puranjit-g/EWallet_JBDL.git
+cd EWallet_JBDL-main
+mvn clean install
 ```
 
-### Initiate a transaction
+### 4. Run Microservices
+Launch each service in separate terminal sessions or run them via your IDE:
 
 ```bash
-curl -X POST "http://localhost:5051/txn/initTxn?receiver=8888888888&purpose=rent&amount=20" \
-  -u 9999999999:secret123
+# Start User Service
+mvn spring-boot:run -pl User-Service
+
+# Start Wallet Service
+mvn spring-boot:run -pl Wallet-Service
+
+# Start Transaction Service
+mvn spring-boot:run -pl Transaction-Service
+
+# Start Notification Service
+mvn spring-boot:run -pl Notification-service
 ```
 
+---
 
+## 📡 API Endpoints & Usage Guide
 
-## License
+### 1. User Service (`http://localhost:8081`)
 
-This repository includes a `LICENSE` file at the root. Review that file for project licensing terms.
+#### **Register / Update User**
+- **Endpoint**: `POST /user/addUpdate`
+- **Headers**: `Content-Type: application/json`
+- **Request Body**:
+```json
+{
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "contact": "+919876543210",
+  "password": "Password123!",
+  "address": "123 Tech Park, Bangalore",
+  "dob": "1995-08-15",
+  "identifier": "PAN",
+  "userIdentifierValue": "ABCDE1234F"
+}
+```
+- **Response**: `200 OK` (Returns created User object with `pk`, `createdOn`, etc.)
+
+---
+
+### 2. Transaction Service (`http://localhost:5051`)
+
+#### **Initiate Fund Transfer**
+- **Endpoint**: `POST /txn/initTxn`
+- **Security**: Basic Auth (Username: Sender Contact Number, Password: User Password)
+- **Query Parameters**:
+  - `receiver`: Contact number of the recipient (e.g., `+919876543211`)
+  - `amount`: Amount to transfer (e.g., `25.0`)
+  - `purpose`: Reason for transfer (e.g., `Dinner split`)
+- **cURL Request**:
+```bash
+curl -X POST "http://localhost:5051/txn/initTxn?receiver=%2B919876543211&amount=25.0&purpose=Dinner%20split" \
+     -u "+919876543210:Password123!"
+```
+- **Response**: `200 OK` (Returns unique Transaction UUID, e.g., `c234a9b8-4d51-4e78-a12b-8910fedcba98`)
+
+---
+
+## ⚙️ Configuration Parameters
+
+Key application properties can be configured in each service's `application.properties` file:
+
+| Property | Default Value | Description |
+| :--- | :--- | :--- |
+| `server.port` | `8081` / `7071` / `5051` / `6061` | Embedded Tomcat HTTP server port |
+| `spring.datasource.url` | `jdbc:mysql://localhost:3306/JBDL_EWALLET...` | MySQL JDBC connection URL |
+| `user.creation.time.balance` | `50.0` | Initial wallet bonus credited upon user signup |
+| `spring.kafka.producer.bootstrap-servers` | `localhost:9092` | Kafka broker host and port |
+| `spring.mail.host` | `sandbox.smtp.mailtrap.io` | SMTP host for email notification service |
+
+---
+
+## 📜 Kafka Event Specifications
+
+1. **`USER_CREATED_FROM_CONSOLE`**:
+   Published by `User-Service` when a user registers.
+   ```json
+   {
+     "user_id": 1,
+     "contact": "+919876543210",
+     "email": "john.doe@example.com",
+     "name": "John Doe",
+     "userIdentifier": "PAN",
+     "userIdentifierValue": "ABCDE1234F"
+   }
+   ```
+
+2. **`TXN_INITIATED_TOPIC`**:
+   Published by `Transaction-Service` when a transfer is requested.
+   ```json
+   {
+     "txnId": "uuid-v4-string",
+     "sender": "+919876543210",
+     "receiver": "+919876543211",
+     "amount": 25.0,
+     "purpose": "Dinner split",
+     "status": "INITIATED"
+   }
+   ```
+
+3. **`TXN_UPDATED_TOPIC`**:
+   Published by `Wallet-Service` after updating wallet balances.
+   ```json
+   {
+     "txnId": "uuid-v4-string",
+     "status": "SUCCESS",
+     "message": "Transaction completed successfully"
+   }
+   ```
+
+---
+
+## 📝 License
+
+This project is open-source and available under the [MIT License](LICENSE).
